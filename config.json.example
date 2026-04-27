@@ -1,0 +1,22 @@
+{
+  "status_file": "/tmp/terminal_presence_status",
+  "log_file": "~/.log/terminal-presence.log",
+  "discord_assets": {
+    "large_image": "terminal",
+    "large_text": "{os_name} Terminal",
+    "small_image": "",
+    "small_text": "{shell_name} shell"
+  },
+  "custom_commands": [
+    {
+      "pattern": "radar.py",
+      "details": "Running Network Radar",
+      "state": "{command}"
+    },
+    {
+      "pattern": "ssh kali",
+      "details": "Remote Access",
+      "state": "Connected to Kali VM"
+    }
+  ]
+}

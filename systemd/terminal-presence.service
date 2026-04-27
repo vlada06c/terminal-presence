@@ -1,0 +1,16 @@
+[Unit]
+Description=Discord terminal presence bridge
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=__TERMINAL_PRESENCE_DIR__
+ExecStart=__TERMINAL_PRESENCE_DIR__/.venv/bin/python __TERMINAL_PRESENCE_DIR__/terminal_presence.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=TERMINAL_PRESENCE_DIR=__TERMINAL_PRESENCE_DIR__
+
+[Install]
+WantedBy=default.target
