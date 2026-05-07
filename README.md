@@ -158,14 +158,14 @@ Example:
 {
   "custom_commands": [
     {
-      "pattern": "radar.py",
-      "details": "Running Network Radar",
+      "pattern": "pytest",
+      "details": "Running Tests",
       "state": "{command}"
     },
     {
-      "pattern": "ssh kali",
+      "pattern": "ssh user@host",
       "details": "Remote Access",
-      "state": "Connected to Kali VM"
+      "state": "{command}"
     }
   ]
 }

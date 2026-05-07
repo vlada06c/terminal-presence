@@ -70,8 +70,16 @@ WRAPPER_COMMANDS = {
     "ionice",
     "stdbuf",
     "setsid",
+    "chrt",
+    "direnv",
+    "firejail",
+    "flock",
+    "taskset",
+    "timeout",
+    "unshare",
 }
 
+SHELL_COMMANDS = {"bash", "sh", "zsh", "fish", "dash", "ash", "ksh"}
 EDITOR_COMMANDS = {"nano", "vim", "nvim", "micro", "hx", "helix"}
 MONITOR_COMMANDS = {"htop", "btop", "bpytop", "top", "iotop"}
 TRANSFER_COMMANDS = {"scp", "rsync", "sftp"}
@@ -80,8 +88,19 @@ CONTAINER_COMMANDS = {"docker", "podman", "docker-compose", "compose"}
 SERVICE_COMMANDS = {"systemctl", "journalctl", "service"}
 PACKAGE_COMMANDS = {"apt", "apt-get", "dnf", "yum", "pacman", "yay", "paru"}
 PERMISSION_COMMANDS = {"chmod", "chown", "chgrp"}
-PYTHON_COMMANDS = {"python", "python3", "uv", "poetry", "pip", "pip3"}
-NODE_COMMANDS = {"node", "npm", "pnpm", "yarn", "bun"}
+PYTHON_COMMANDS = {"python", "python3", "ipython", "uv", "uvx", "poetry", "pip", "pip3", "pipx"}
+NODE_COMMANDS = {"node", "npm", "npx", "pnpm", "yarn", "bun", "deno"}
+TEST_COMMANDS = {"pytest", "tox", "nox", "bats", "prove"}
+BUILD_COMMANDS = {"make", "cmake", "meson", "ninja", "just"}
+SEARCH_COMMANDS = {"rg", "grep", "ag", "ack", "fd", "find", "locate"}
+ARCHIVE_COMMANDS = {"tar", "zip", "unzip", "7z", "7za", "gzip", "gunzip", "xz", "zstd"}
+DATABASE_COMMANDS = {"psql", "mysql", "sqlite3", "redis-cli", "mongosh"}
+LINT_COMMANDS = {"ruff", "flake8", "mypy", "pyright", "shellcheck", "eslint", "black", "isort"}
+RUST_COMMANDS = {"cargo", "rustc", "rustup"}
+GO_COMMANDS = {"go", "gofmt"}
+NETWORK_COMMANDS = {"ping", "dig", "nslookup", "host", "mtr", "traceroute", "tcpdump", "iftop"}
+INFRA_COMMANDS = {"terraform", "terragrunt", "ansible", "ansible-playbook", "packer", "vagrant"}
+DOC_COMMANDS = {"man", "tldr", "info"}
 
 LOGGER = logging.getLogger("terminal_presence")
 
@@ -389,6 +408,13 @@ def parse_command(command: str) -> list[str]:
         return command.split()
 
 
+def normalize_command_name(token: str) -> str:
+    stripped = token.strip()
+    if not stripped:
+        return ""
+    return Path(stripped).name.lower()
+
+
 def skip_option_with_value(tokens: list[str], index: int, options: set[str]) -> int:
     if tokens[index] in options and index + 1 < len(tokens):
         return index + 2
@@ -396,10 +422,12 @@ def skip_option_with_value(tokens: list[str], index: int, options: set[str]) -> 
 
 
 def unwrap_command(tokens: list[str]) -> str:
+    # Shell hooks often write the outer wrapper command. Skip common wrappers
+    # so classification uses the actual tool the user is running.
     index = 0
 
     while index < len(tokens):
-        token = tokens[index]
+        token = normalize_command_name(tokens[index])
 
         if token in {"sudo", "doas"}:
             index += 1
@@ -437,6 +465,27 @@ def unwrap_command(tokens: list[str]) -> str:
             index += 1
             continue
 
+        if token == "timeout":
+            index += 1
+            while index < len(tokens):
+                current = tokens[index]
+                if current == "--":
+                    index += 1
+                    break
+                if not current.startswith("-"):
+                    index += 1
+                    break
+                index = skip_option_with_value(tokens, index, {"-k", "--kill-after", "-s", "--signal"})
+            continue
+
+        if token == "direnv":
+            index += 1
+            if index < len(tokens) and normalize_command_name(tokens[index]) == "exec":
+                index += 1
+                if index < len(tokens) and not tokens[index].startswith("-"):
+                    index += 1
+            continue
+
         if token in {"nice", "ionice", "stdbuf"}:
             index += 1
             while index < len(tokens):
@@ -449,6 +498,49 @@ def unwrap_command(tokens: list[str]) -> str:
                 index = skip_option_with_value(tokens, index, {"-n", "-c", "-t", "-o", "-e", "-i"})
             continue
 
+        if token == "taskset":
+            index += 1
+            while index < len(tokens):
+                current = tokens[index]
+                if current == "--":
+                    index += 1
+                    break
+                if not current.startswith("-"):
+                    index += 1
+                    break
+                index = skip_option_with_value(tokens, index, {"-c", "-p"})
+            continue
+
+        if token == "chrt":
+            index += 1
+            while index < len(tokens):
+                current = tokens[index]
+                if current == "--":
+                    index += 1
+                    break
+                if not current.startswith("-"):
+                    index += 1
+                    break
+                index = skip_option_with_value(
+                    tokens,
+                    index,
+                    {"-a", "-e", "-f", "-i", "-m", "-o", "-p", "-r", "-T", "-P", "-D"},
+                )
+            continue
+
+        if token == "flock":
+            index += 1
+            while index < len(tokens):
+                current = tokens[index]
+                if current == "--":
+                    index += 1
+                    break
+                if not current.startswith("-"):
+                    index += 1
+                    break
+                index = skip_option_with_value(tokens, index, {"-c", "-E", "-F", "-o", "-w"})
+            continue
+
         if token in WRAPPER_COMMANDS:
             index += 1
             continue
@@ -458,6 +550,35 @@ def unwrap_command(tokens: list[str]) -> str:
             continue
 
         return token
+
+    return ""
+
+
+def git_subcommand(tokens: list[str]) -> str:
+    index = 1
+    options_with_values = {
+        "-C",
+        "-c",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--exec-path",
+        "--super-prefix",
+        "--config-env",
+    }
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token in options_with_values and index + 1 < len(tokens):
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return normalize_command_name(token)
 
     return ""
 
@@ -594,12 +715,15 @@ def get_context(snapshot: StatusSnapshot, settings: Settings) -> tuple[str, str]
         return custom_match
 
     tokens = parse_command(cleaned)
-    first_token = tokens[0] if tokens else ""
-    base_command = unwrap_command(tokens)
+    normalized_tokens = [normalize_command_name(token) for token in tokens]
+    first_token = normalized_tokens[0] if normalized_tokens else ""
+    base_command = normalize_command_name(unwrap_command(tokens))
 
     if not base_command or base_command in BLACKLIST:
         return settings.idle_details, idle_state
 
+    # Keep broad built-in categories first, then fall back to command-family
+    # buckets so the function stays easy to extend without custom rules.
     if base_command == "ssh":
         return "Remote Access", cleaned
 
@@ -612,23 +736,30 @@ def get_context(snapshot: StatusSnapshot, settings: Settings) -> tuple[str, str]
     if base_command in EDITOR_COMMANDS:
         return "Editing Files", cleaned
 
-    if base_command in PYTHON_COMMANDS:
-        return "Running Python", cleaned
-
     if base_command == "git":
-        if " push" in f" {cleaned}":
+        subcommand = git_subcommand(tokens)
+        if subcommand == "push":
             return "Shipping Code", cleaned
-        if " commit" in f" {cleaned}":
+        if subcommand == "commit":
             return "Committing Changes", cleaned
-        if " status" in f" {cleaned}":
+        if subcommand in {"status", "diff", "log", "show", "blame"}:
             return "Checking Repository", cleaned
+        if subcommand in {"pull", "fetch", "clone"}:
+            return "Syncing Repository", cleaned
+        if subcommand in {"rebase", "merge", "cherry-pick", "revert"}:
+            return "Rewriting History", cleaned
+        if subcommand in {"checkout", "switch", "restore"}:
+            return "Changing Branches", cleaned
         return "Working with Git", cleaned
 
-    if first_token in {"sudo", "doas", "su"} and base_command in {"", "bash", "sh", "fish", "zsh"}:
+    if first_token in {"sudo", "doas", "su"} and base_command in {"", *SHELL_COMMANDS}:
         return "Root Mode Engaged", cleaned
 
     if base_command == "su":
         return "Root Mode Engaged", cleaned
+
+    if base_command in DOC_COMMANDS:
+        return "Reading Documentation", cleaned
 
     if base_command in MONITOR_COMMANDS:
         return "Monitoring System", cleaned
@@ -645,20 +776,53 @@ def get_context(snapshot: StatusSnapshot, settings: Settings) -> tuple[str, str]
     if base_command in CONTAINER_COMMANDS:
         return "Container Work", cleaned
 
+    if base_command in DATABASE_COMMANDS:
+        return "Database Work", cleaned
+
     if base_command in PERMISSION_COMMANDS:
         return "Changing Permissions", cleaned
 
     if base_command in SERVICE_COMMANDS:
         return "Managing Services", cleaned
 
+    if base_command in BUILD_COMMANDS:
+        return "Building Project", cleaned
+
+    if base_command in TEST_COMMANDS:
+        return "Running Tests", cleaned
+
+    if base_command in SEARCH_COMMANDS:
+        return "Searching Files", cleaned
+
+    if base_command in ARCHIVE_COMMANDS:
+        return "Managing Archives", cleaned
+
     if base_command in {"tmux", "screen", "zellij"}:
         return "Terminal Multiplexing", cleaned
 
-    if base_command in {"kubectl", "helm"}:
+    if base_command in {"kubectl", "helm", "k9s", "stern"}:
         return "Cluster Operations", cleaned
+
+    if base_command in INFRA_COMMANDS:
+        return "Infrastructure Work", cleaned
+
+    if base_command in PYTHON_COMMANDS:
+        return "Running Python", cleaned
 
     if base_command in NODE_COMMANDS:
         return "Running JavaScript", cleaned
+
+    if base_command in RUST_COMMANDS:
+        return "Running Rust Tooling", cleaned
+
+    if base_command in GO_COMMANDS:
+        return "Running Go Tooling", cleaned
+
+    if base_command in LINT_COMMANDS:
+        return "Checking Code Quality", cleaned
+
+    if base_command in NETWORK_COMMANDS:
+        return "Network Diagnostics", cleaned
 
     return "Using Terminal", cleaned
 
